@@ -93,7 +93,8 @@ server {
 NGINX
 ln -sf /etc/nginx/sites-available/shop-bot /etc/nginx/sites-enabled/shop-bot
 rm -f /etc/nginx/sites-enabled/default
-nginx -t && systemctl reload nginx
+nginx -t
+systemctl reload nginx
 
 if [ ! -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]; then
   # Штатный таймер certbot мог занять блокировку — ждём и пробуем снова.
@@ -130,8 +131,7 @@ server {
 }
 
 server {
-    listen ${HTTPS_PORT} ssl;
-    http2 on;
+    listen ${HTTPS_PORT} ssl http2;
     server_name ${DOMAIN};
 
     ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
@@ -150,7 +150,8 @@ server {
     }
 }
 NGINX
-nginx -t && systemctl reload nginx
+nginx -t
+systemctl reload nginx
 systemctl enable nginx >/dev/null 2>&1 || true
 
 # Автопродление: certbot ставит таймер сам, добавляем перезагрузку nginx.
