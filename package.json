@@ -1,11 +1,20 @@
 {
-  "name": "app",
+  "name": "telegram-shop-bot",
   "version": "1.0.0",
+  "description": "Telegram-бот магазин ссылок: баланс, каталог, покупка, пополнение криптой",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/**/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
-    "express": "^4.18.2"
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^17.4.2",
+    "express": "^4.18.2",
+    "telegraf": "^4.16.3"
   }
 }
