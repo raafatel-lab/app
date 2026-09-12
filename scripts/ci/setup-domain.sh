@@ -96,8 +96,23 @@ rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 
 if [ ! -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]; then
-  certbot certonly --webroot -w /var/www/certbot -d "${DOMAIN}" \
-    --non-interactive --agree-tos -m "${EMAIL:-admin@${DOMAIN}}" --no-eff-email
+  # Штатный таймер certbot мог занять блокировку — ждём и пробуем снова.
+  issued=""
+  for attempt in 1 2 3 4 5; do
+    if certbot certonly --webroot -w /var/www/certbot -d "${DOMAIN}" \
+         --non-interactive --agree-tos -m "${EMAIL:-admin@${DOMAIN}}" --no-eff-email; then
+      issued=yes
+      break
+    fi
+    if ! pgrep -x certbot >/dev/null 2>&1; then
+      echo "certbot не запущен, снимаю зависшую блокировку"
+      rm -f /var/lib/letsencrypt/.certbot.lock /var/log/letsencrypt/.certbot.lock /etc/letsencrypt/.certbot.lock
+    else
+      echo "certbot занят другим процессом, жду (попытка $attempt)"
+    fi
+    sleep 20
+  done
+  test -n "$issued" || { echo "не удалось выпустить сертификат"; exit 1; }
 fi
 
 # HTTPS на отдельном порту: 443 занят VPN и остаётся нетронутым.
