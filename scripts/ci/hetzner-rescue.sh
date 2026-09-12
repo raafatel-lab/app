@@ -47,6 +47,14 @@ wait_ssh() {
   return 1
 }
 
+# Если доступ уже есть (например, восстановил параллельный прогон) — ничего не трогаем.
+if ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=10 \
+       -o UserKnownHostsFile="$KNOWN_HOSTS" -o StrictHostKeyChecking=accept-new \
+       "$SSH_USER@$SSH_HOST" 'test -d /var/www || true' 2>/dev/null; then
+  echo "ключ уже работает — аварийный режим не нужен"
+  exit 0
+fi
+
 echo "== ищу сервер в проекте =="
 servers=$(api "$API/servers?per_page=50")
 SERVER_ID=$(echo "$servers" | jq -r --arg ip "$SSH_HOST" '.servers[] | select(.public_net.ipv4.ip == $ip) | .id')
