@@ -1,0 +1,63 @@
+name: Server check
+
+# Осмотр сервера без изменений: что запущено, что лежит, чем поднимались боты.
+# Запускается изменением файла .github/server-check-trigger (и вручную).
+on:
+  push:
+    paths:
+      - .github/server-check-trigger
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Подготовить ключ
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: bash scripts/ci/prepare-key.sh
+
+      - name: Осмотреть сервер
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new \
+              -o UserKnownHostsFile=/tmp/known -o ConnectTimeout=20 \
+              "$SSH_USER@$SSH_HOST" 'bash -se' <<'EOS'
+          set -u
+          echo "=== система ==="; hostname; uptime
+
+          echo; echo "=== процессы pm2 (root) ==="
+          pm2 ls 2>/dev/null || echo "pm2 не установлен или пуст"
+
+          echo; echo "=== сохранённые списки pm2 ==="
+          ls -la /root/.pm2/dump.pm2* 2>/dev/null || echo "дампов нет"
+          for f in /root/.pm2/dump.pm2 /root/.pm2/dump.pm2.bak; do
+            if [ -f "$f" ]; then
+              echo "-- $f:"
+              grep -o '"name":"[^"]*"' "$f" | sort -u | sed 's/^/     /'
+            fi
+          done
+
+          echo; echo "=== pm2 у других пользователей ==="
+          ls -d /home/*/.pm2 2>/dev/null || echo "нет"
+
+          echo; echo "=== docker ==="
+          command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Image}}' || echo "docker не установлен"
+
+          echo; echo "=== systemd: работающие сервисы, похожие на боты ==="
+          systemctl list-units --type=service --state=running --no-legend 2>/dev/null \
+            | grep -iE 'bot|node|python|vpn|xray|wire' || echo "совпадений нет"
+
+          echo; echo "=== каталоги проектов ==="
+          ls -la /var/www /opt /srv /root 2>/dev/null | head -60
+
+          echo; echo "=== слушающие порты ==="
+          ss -tlnp 2>/dev/null | head -20
+
+          echo; echo "=== cron ==="
+          crontab -l 2>/dev/null || echo "пусто"
+          EOS
