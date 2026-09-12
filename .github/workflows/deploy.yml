@@ -262,6 +262,9 @@ jobs:
           curl -fsS --max-time 10 http://127.0.0.1:3000/health || { echo 'сервер не отвечает'; exit 1; }
           echo
 
+          echo '== все процессы pm2 на сервере =='
+          pm2 ls || true
+
           echo '== связь с Telegram =='
           # Токен берём из .env на сервере и наружу не печатаем — только имя бота.
           bot_name=$(
