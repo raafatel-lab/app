@@ -1,0 +1,29 @@
+name: Check payments
+
+# Проверка платёжного контура: DNS, HTTPS, приём вебхука CryptoBot, токен.
+# Балансы не трогает. Запуск — изменением .github/payments-check-trigger.
+on:
+  push:
+    paths:
+      - .github/payments-check-trigger
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Подготовить ключ
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: bash scripts/ci/prepare-key.sh
+
+      - name: Проверить платежи
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
+          CRYPTO_PAY_TOKEN: ${{ secrets.CRYPTO_PAY_TOKEN }}
+        run: |
+          DOMAIN=$(head -1 .github/domain | tr -d '[:space:]')
+          DOMAIN="$DOMAIN" bash scripts/ci/check-payments.sh
