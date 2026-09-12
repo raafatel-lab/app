@@ -141,6 +141,28 @@ test('чужие события игнорируются без падения',
   assert.strictEqual(res.status, 200);
 });
 
+test('ручной криптоперевод: хеш сохраняется, зачисление одноразовое', () => {
+  const user = mod.usersRepo.upsertFromTelegram({ id: 5002, username: 'manual', first_name: 'Manual' });
+  const paymentId = mod.paymentsRepo.create({
+    userId: user.id, provider: 'manual', amountCents: 30000, meta: { telegram_id: user.telegram_id },
+  });
+
+  mod.paymentsRepo.mergeMeta(paymentId, { tx: '0xabc123' });
+  const stored = JSON.parse(mod.paymentsRepo.getById(paymentId).meta);
+  assert.strictEqual(stored.tx, '0xabc123');
+  assert.strictEqual(stored.telegram_id, user.telegram_id, 'прежние поля meta не затёрты');
+
+  assert.strictEqual(mod.paymentsRepo.listPendingManual(10).some((p) => p.id === paymentId), true);
+
+  const first = mod.paymentsService.approveManual(paymentId, 777);
+  assert.strictEqual(first.credited, true);
+  assert.strictEqual(mod.usersRepo.getById(user.id).balance_cents, 30000);
+
+  const second = mod.paymentsService.approveManual(paymentId, 777);
+  assert.strictEqual(second.credited, false, 'повторное подтверждение не удваивает баланс');
+  assert.strictEqual(mod.usersRepo.getById(user.id).balance_cents, 30000);
+});
+
 test.after(() => {
   mock.close();
   appServer.close();

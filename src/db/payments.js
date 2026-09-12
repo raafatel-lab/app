@@ -21,6 +21,19 @@ module.exports = {
 
   setStatus: (id, status) => db.prepare('UPDATE payments SET status = ? WHERE id = ?').run(status, id),
 
+  // Дописывает поля в meta, не теряя уже сохранённые.
+  mergeMeta: (id, patch) => {
+    const row = db.prepare('SELECT meta FROM payments WHERE id = ?').get(id);
+    if (!row) return;
+    let meta = {};
+    try {
+      meta = JSON.parse(row.meta) || {};
+    } catch {
+      meta = {};
+    }
+    db.prepare('UPDATE payments SET meta = ? WHERE id = ?').run(JSON.stringify({ ...meta, ...patch }), id);
+  },
+
   listPending: (userId) =>
     db
       .prepare("SELECT * FROM payments WHERE user_id = ? AND status = 'pending' ORDER BY id DESC")

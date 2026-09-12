@@ -105,17 +105,36 @@ function paysView() {
     return { text: '💰 Заявок на ручное пополнение нет.', keyboard: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Назад', 'adm:menu')]]) };
   }
 
+  const lines = [];
   const rows = pending.map((p) => {
     const user = usersRepo.getById(p.user_id);
+    let tx = '';
+    try {
+      tx = (JSON.parse(p.meta) || {}).tx || '';
+    } catch {
+      tx = '';
+    }
+
+    lines.push(
+      [
+        `#${p.id} · ${money.format(p.amount_cents)} · ${p.created_at}`,
+        `от <code>${user ? user.telegram_id : '?'}</code>${user && user.username ? ` (@${user.username})` : ''}`,
+        tx ? `хеш: <code>${escapeHtml(tx)}</code>` : 'хеш не указан',
+      ].join('\n'),
+    );
+
     return [
-      Markup.button.callback(`#${p.id} · ${money.format(p.amount_cents)} · ${user ? user.telegram_id : '?'}`, 'noop'),
+      Markup.button.callback(`#${p.id} · ${money.format(p.amount_cents)}`, 'noop'),
       Markup.button.callback('✅', `adm:payok:${p.id}`),
       Markup.button.callback('❌', `adm:payno:${p.id}`),
     ];
   });
   rows.push([Markup.button.callback('⬅️ Назад', 'adm:menu')]);
 
-  return { text: '💰 <b>Заявки на пополнение</b>', keyboard: Markup.inlineKeyboard(rows) };
+  return {
+    text: ['💰 <b>Заявки на пополнение</b>', '', lines.join('\n\n')].join('\n'),
+    keyboard: Markup.inlineKeyboard(rows),
+  };
 }
 
 function statsView() {

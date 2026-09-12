@@ -217,6 +217,44 @@ jobs:
           fi
           EOS
 
+      - name: Обновить настройки оплаты в .env
+        env:
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
+          MANUAL_CRYPTO_WALLETS: ${{ secrets.MANUAL_CRYPTO_WALLETS }}
+        run: |
+          if [ -z "$MANUAL_CRYPTO_WALLETS" ]; then
+            echo "секрет MANUAL_CRYPTO_WALLETS не задан — ручной криптоперевод остаётся выключенным"
+            exit 0
+          fi
+          ssh -i ~/.ssh/id_deploy -o SendEnv=none "$SSH_USER@$SSH_HOST" \
+            "APP_DIR='$APP_DIR' APP_NAME='$APP_NAME' WALLETS='$MANUAL_CRYPTO_WALLETS' bash -se" <<'EOS'
+          set -euo pipefail
+          cd "$APP_DIR"
+
+          # Точечно правим ключи, не трогая остальной .env.
+          set_key() {
+            if grep -q "^$1=" .env; then
+              python3 - "$1" "$2" <<'PY'
+          import pathlib, sys
+          key, value = sys.argv[1], sys.argv[2]
+          path = pathlib.Path('.env')
+          lines = path.read_text().splitlines()
+          path.write_text('\n'.join(f'{key}={value}' if l.startswith(f'{key}=') else l for l in lines) + '\n')
+          PY
+            else
+              printf '%s=%s\n' "$1" "$2" >> .env
+            fi
+          }
+
+          set_key MANUAL_CRYPTO 1
+          set_key MANUAL_CRYPTO_WALLETS "$WALLETS"
+          chmod 600 .env
+
+          echo "кошельков настроено: $(printf '%s' "$WALLETS" | awk -F';' '{print NF}')"
+          pm2 restart "$APP_NAME" --update-env >/dev/null
+          EOS
+
       - name: Установить зависимости и перезапустить бота
         env:
           SSH_USER: ${{ vars.SSH_USER || 'root' }}

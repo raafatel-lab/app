@@ -91,21 +91,8 @@ async function createAndSend(ctx, method, amountCents) {
       .map((w) => `• <b>${escapeHtml(w.label)}</b>\n<code>${escapeHtml(w.address)}</code>`)
       .join('\n');
 
-    await notifyAdmins(
-      ctx.telegram,
-      [
-        `🪙 <b>Заявка на пополнение</b> #${payment.id}`,
-        `Сумма: ${money.format(payment.amount_cents)}`,
-        `Пользователь: <code>${ctx.state.user.telegram_id}</code>${ctx.state.user.username ? ` (@${ctx.state.user.username})` : ''}`,
-      ].join('\n'),
-      Markup.inlineKeyboard([
-        [
-          Markup.button.callback('✅ Зачислить', `adm:payok:${payment.id}`),
-          Markup.button.callback('❌ Отклонить', `adm:payno:${payment.id}`),
-        ],
-      ]),
-    );
-
+    // Админов зовём не сейчас, а когда пользователь пришлёт хеш перевода:
+    // иначе подтверждать пришлось бы вслепую.
     return ctx.reply(
       [
         `🪙 <b>Счёт #${payment.id}</b> на ${money.format(payment.amount_cents)}`,
@@ -113,10 +100,16 @@ async function createAndSend(ctx, method, amountCents) {
         'Переведи сумму на один из кошельков:',
         wallets,
         '',
-        `⚠️ В комментарии к переводу укажи: <code>${payment.id}</code>`,
-        'После перевода нажми «Я оплатил» — оператор подтвердит зачисление.',
+        'После перевода нажми «Я перевёл» и пришли хеш транзакции —',
+        'по нему оператор найдёт платёж и зачислит баланс.',
       ].join('\n'),
-      { parse_mode: 'HTML', ...invoiceKeyboard(payment) },
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('✅ Я перевёл', `topup:manual:${payment.id}`)],
+          [Markup.button.callback('❌ Отменить счёт', `topup:cancel:${payment.id}`)],
+        ]),
+      },
     );
   }
 
@@ -171,6 +164,62 @@ function register(bot) {
 
     prompts.clear(ctx);
     return createAndSend(ctx, state.method, amount);
+  });
+
+  // --- ручной криптоперевод: пользователь присылает хеш, админ подтверждает ---
+  bot.action(/^topup:manual:(\d+)$/, async (ctx) => {
+    const paymentId = Number(ctx.match[1]);
+    const payment = paymentsRepo.getById(paymentId);
+    if (!payment || payment.user_id !== ctx.state.user.id) return ctx.answerCbQuery('Счёт не найден.');
+    if (payment.status !== 'pending') return ctx.answerCbQuery('Счёт уже обработан.');
+
+    await ctx.answerCbQuery();
+    prompts.ask(ctx, 'topup_tx', { paymentId });
+    return ctx.reply(
+      [
+        'Пришли хеш транзакции одним сообщением.',
+        'Найти его можно в кошельке, в деталях перевода — длинная строка вида <code>0x9a3f…</code>.',
+        'Если хеша нет под рукой, напиши <b>нет</b> — оператор поищет платёж по сумме.',
+      ].join('\n'),
+      { parse_mode: 'HTML' },
+    );
+  });
+
+  prompts.register('topup_tx', async (ctx, state) => {
+    const payment = paymentsRepo.getById(state.paymentId);
+    if (!payment || payment.user_id !== ctx.state.user.id) {
+      prompts.clear(ctx);
+      return ctx.reply('Счёт не найден.');
+    }
+
+    const text = ctx.message.text.trim();
+    const tx = /^нет$/i.test(text) ? '' : text.slice(0, 200);
+    prompts.clear(ctx);
+    paymentsRepo.mergeMeta(payment.id, { tx });
+
+    const user = ctx.state.user;
+    await notifyAdmins(
+      ctx.telegram,
+      [
+        `🪙 <b>Заявка на пополнение</b> #${payment.id}`,
+        `Сумма: ${money.format(payment.amount_cents)}`,
+        `Пользователь: <code>${user.telegram_id}</code>${user.username ? ` (@${user.username})` : ''}`,
+        tx ? `Хеш: <code>${escapeHtml(tx)}</code>` : 'Хеш не указан — искать по сумме и времени',
+      ].join('\n'),
+      Markup.inlineKeyboard([
+        [
+          Markup.button.callback('✅ Зачислить', `adm:payok:${payment.id}`),
+          Markup.button.callback('❌ Отклонить', `adm:payno:${payment.id}`),
+        ],
+      ]),
+    );
+
+    return ctx.reply(
+      [
+        `✅ Заявка #${payment.id} отправлена оператору.`,
+        'Как только перевод подтвердится, баланс пополнится и придёт уведомление.',
+      ].join('\n'),
+    );
   });
 
   bot.action(/^topup:check:(\d+)$/, async (ctx) => {
