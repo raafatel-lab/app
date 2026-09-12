@@ -185,7 +185,7 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
         run: |
           ssh -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" \
-            "APP_NAME='$APP_NAME' bash -se" <<'EOS'
+            "APP_DIR='$APP_DIR' APP_NAME='$APP_NAME' bash -se" <<'EOS'
           set -euo pipefail
 
           status=$(pm2 jlist | node -e "
@@ -199,6 +199,16 @@ jobs:
           echo '== healthcheck =='
           curl -fsS --max-time 10 http://127.0.0.1:3000/health || { echo 'сервер не отвечает'; exit 1; }
           echo
+
+          echo '== связь с Telegram =='
+          # Токен берём из .env на сервере и наружу не печатаем — только имя бота.
+          bot_name=$(
+            set +u
+            . "$APP_DIR/.env" 2>/dev/null || true
+            curl -fsS --max-time 15 "https://api.telegram.org/bot${BOT_TOKEN}/getMe" 2>/dev/null \
+              | grep -o '"username":"[^"]*"' | head -1
+          )
+          echo "${bot_name:-не удалось опросить Telegram}"
 
           echo '== последние логи =='
           pm2 logs "$APP_NAME" --lines 30 --nostream || true
