@@ -47,6 +47,19 @@ wait_ssh() {
   return 1
 }
 
+# В аварийной системе корень — не раздел диска, по этому её и отличаем.
+# Флагу rescue_enabled из API верить нельзя: Hetzner гасит его сразу после
+# загрузки в аварийный режим, хотя система на машине именно аварийная.
+in_rescue() {
+  local src
+  src=$(ssh_try 'findmnt -n -o SOURCE / 2>/dev/null || true' 2>/dev/null || true)
+  case "$src" in
+    /dev/*) return 1 ;;
+    '') return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 echo "== ищу сервер в проекте =="
 servers=$(api "$API/servers?per_page=50")
 SERVER_ID=$(echo "$servers" | jq -r --arg ip "$SSH_HOST" '.servers[] | select(.public_net.ipv4.ip == $ip) | .id')
@@ -55,14 +68,11 @@ if [ -z "$SERVER_ID" ]; then
   echo "$servers" | jq -r '.servers[] | "  \(.name) — \(.public_net.ipv4.ip)"'
   exit 1
 fi
-rescue_on=$(api "$API/servers/$SERVER_ID" | jq -r '.server.rescue_enabled')
+rescue_on=$(api "$API/servers/$SERVER_ID" | jq -r ".server.rescue_enabled")
 echo "сервер id=$SERVER_ID, состояние: $(server_status), аварийный режим: $rescue_on"
 
-# Если сервер работает в обычном режиме и ключ уже принят — делать нечего.
-# В аварийном режиме ключ тоже работает, поэтому одной проверки SSH мало.
-if [ "$rescue_on" != "true" ] && ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=10 \
-     -o UserKnownHostsFile="$KNOWN_HOSTS" -o StrictHostKeyChecking=accept-new \
-     "$SSH_USER@$SSH_HOST" true 2>/dev/null; then
+# Делать нечего, только если ключ принят именно обычной системой.
+if wait_ssh 2 && ! in_rescue; then
   echo "ключ уже работает на обычной системе — ничего не трогаю"
   exit 0
 fi
@@ -80,18 +90,7 @@ fi
 test -n "$key_id" || { echo "::error::не удалось добавить ключ в проект Hetzner"; exit 1; }
 echo "ключ в проекте: id=$key_id"
 
-# В аварийной системе корень — не раздел диска, по этому её и отличаем.
-in_rescue() {
-  local src
-  src=$(ssh_try 'findmnt -n -o SOURCE / 2>/dev/null || true' 2>/dev/null || true)
-  case "$src" in
-    /dev/*) return 1 ;;
-    '') return 1 ;;
-    *) return 0 ;;
-  esac
-}
-
-if [ "$rescue_on" = "true" ] && wait_ssh 3 && in_rescue; then
+if wait_ssh 3 && in_rescue; then
   echo "== сервер уже в аварийном режиме, перезагрузка не нужна =="
 else
   echo "== включаю аварийный режим =="
