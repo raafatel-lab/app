@@ -34,9 +34,9 @@ jobs:
       - name: Настроить SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
         run: |
-          test -n "$SSH_HOST" || { echo "::error::не задан секрет SSH_HOST"; exit 1; }
+          test -n "$SSH_HOST" || { echo "::error::не задан адрес сервера: секрет SSH_HOST или переменная SSH_HOST"; exit 1; }
           test -n "$SSH_PRIVATE_KEY" || { echo "::error::не задан секрет SSH_PRIVATE_KEY"; exit 1; }
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
@@ -46,7 +46,7 @@ jobs:
       - name: Подготовить сервер (node, pm2, каталоги)
         env:
           SSH_USER: ${{ vars.SSH_USER || 'root' }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
         run: |
           ssh -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" 'bash -se' <<'EOS'
           set -euo pipefail
@@ -67,7 +67,7 @@ jobs:
       - name: Залить код
         env:
           SSH_USER: ${{ vars.SSH_USER || 'root' }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
         run: |
           rsync -az --delete \
             --exclude '.git' --exclude 'node_modules' --exclude 'data' --exclude '.env' \
@@ -76,7 +76,7 @@ jobs:
       - name: Создать .env, если его ещё нет
         env:
           SSH_USER: ${{ vars.SSH_USER || 'root' }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
           CRYPTO_PAY_TOKEN: ${{ secrets.CRYPTO_PAY_TOKEN }}
@@ -119,7 +119,7 @@ jobs:
       - name: Установить зависимости и перезапустить бота
         env:
           SSH_USER: ${{ vars.SSH_USER || 'root' }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
         run: |
           ssh -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" \
             "APP_DIR='$APP_DIR' APP_NAME='$APP_NAME' bash -se" <<'EOS'
@@ -143,7 +143,7 @@ jobs:
       - name: Проверить, что бот поднялся
         env:
           SSH_USER: ${{ vars.SSH_USER || 'root' }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
         run: |
           ssh -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" \
             "APP_NAME='$APP_NAME' bash -se" <<'EOS'

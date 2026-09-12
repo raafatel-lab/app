@@ -35,9 +35,9 @@ jobs:
       - name: Настроить SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
         run: |
-          test -n "$SSH_HOST" || { echo "::error::не задан секрет SSH_HOST"; exit 1; }
+          test -n "$SSH_HOST" || { echo "::error::не задан адрес сервера: секрет SSH_HOST или переменная SSH_HOST"; exit 1; }
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
@@ -46,7 +46,7 @@ jobs:
       - name: Выполнить ${{ inputs.action }}
         env:
           SSH_USER: ${{ vars.SSH_USER || 'root' }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
           CRYPTO_PAY_TOKEN: ${{ secrets.CRYPTO_PAY_TOKEN }}
