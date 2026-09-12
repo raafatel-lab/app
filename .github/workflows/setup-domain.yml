@@ -1,0 +1,32 @@
+name: Setup domain
+
+# Домен для бота: nginx, сертификат Let's Encrypt, PUBLIC_URL.
+# Запускается изменением файла .github/domain (и вручную).
+on:
+  push:
+    paths:
+      - .github/domain
+  workflow_dispatch:
+
+jobs:
+  domain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Подготовить ключ
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: bash scripts/ci/prepare-key.sh
+
+      - name: Настроить домен
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
+        run: |
+          DOMAIN=$(head -1 .github/domain | tr -d '[:space:]')
+          test -n "$DOMAIN" || { echo "::error::в .github/domain пусто"; exit 1; }
+          echo "домен: $DOMAIN"
+          DOMAIN="$DOMAIN" bash scripts/ci/setup-domain.sh
