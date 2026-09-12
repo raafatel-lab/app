@@ -20,7 +20,8 @@ remote() {
 }
 
 echo "== проверяю DNS =="
-resolved=$(getent ahostsv4 "$DOMAIN" | awk '{print $1}' | sort -u | head -3 | tr '\n' ' ')
+# getent возвращает 2, если имя не резолвится, — гасим, чтобы выдать понятную ошибку.
+resolved=$( (getent ahostsv4 "$DOMAIN" || true) | awk '{print $1}' | sort -u | head -3 | tr '\n' ' ')
 echo "$DOMAIN -> ${resolved:-ничего}"
 if [ -z "$resolved" ]; then
   echo "::error::домен $DOMAIN не резолвится. Создай A-запись на $SSH_HOST и подожди несколько минут"
