@@ -47,14 +47,6 @@ wait_ssh() {
   return 1
 }
 
-# Если доступ уже есть (например, восстановил параллельный прогон) — ничего не трогаем.
-if ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=10 \
-       -o UserKnownHostsFile="$KNOWN_HOSTS" -o StrictHostKeyChecking=accept-new \
-       "$SSH_USER@$SSH_HOST" 'test -d /var/www || true' 2>/dev/null; then
-  echo "ключ уже работает — аварийный режим не нужен"
-  exit 0
-fi
-
 echo "== ищу сервер в проекте =="
 servers=$(api "$API/servers?per_page=50")
 SERVER_ID=$(echo "$servers" | jq -r --arg ip "$SSH_HOST" '.servers[] | select(.public_net.ipv4.ip == $ip) | .id')
@@ -63,7 +55,17 @@ if [ -z "$SERVER_ID" ]; then
   echo "$servers" | jq -r '.servers[] | "  \(.name) — \(.public_net.ipv4.ip)"'
   exit 1
 fi
-echo "сервер id=$SERVER_ID, состояние: $(server_status)"
+rescue_on=$(api "$API/servers/$SERVER_ID" | jq -r '.server.rescue_enabled')
+echo "сервер id=$SERVER_ID, состояние: $(server_status), аварийный режим: $rescue_on"
+
+# Если сервер работает в обычном режиме и ключ уже принят — делать нечего.
+# В аварийном режиме ключ тоже работает, поэтому одной проверки SSH мало.
+if [ "$rescue_on" != "true" ] && ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=10 \
+     -o UserKnownHostsFile="$KNOWN_HOSTS" -o StrictHostKeyChecking=accept-new \
+     "$SSH_USER@$SSH_HOST" true 2>/dev/null; then
+  echo "ключ уже работает на обычной системе — ничего не трогаю"
+  exit 0
+fi
 
 echo "== кладу деплой-ключ в проект =="
 pub=$(cat ~/.ssh/id_deploy.pub)
@@ -78,30 +80,46 @@ fi
 test -n "$key_id" || { echo "::error::не удалось добавить ключ в проект Hetzner"; exit 1; }
 echo "ключ в проекте: id=$key_id"
 
-echo "== включаю аварийный режим =="
-api -X POST -d "$(jq -n --argjson k "$key_id" '{type:"linux64", ssh_keys:[$k]}')" \
-  "$API/servers/$SERVER_ID/actions/enable_rescue" | jq -r '.action.status'
+# В аварийной системе корень — не раздел диска, по этому её и отличаем.
+in_rescue() {
+  local src
+  src=$(ssh_try 'findmnt -n -o SOURCE / 2>/dev/null || true' 2>/dev/null || true)
+  case "$src" in
+    /dev/*) return 1 ;;
+    '') return 1 ;;
+    *) return 0 ;;
+  esac
+}
 
-echo "== мягко выключаю сервер =="
-api -X POST "$API/servers/$SERVER_ID/actions/shutdown" >/dev/null
-if ! wait_status off 18; then
-  echo "не выключился по ACPI — выключаю принудительно"
-  api -X POST "$API/servers/$SERVER_ID/actions/poweroff" >/dev/null
-  wait_status off
+if [ "$rescue_on" = "true" ] && wait_ssh 3 && in_rescue; then
+  echo "== сервер уже в аварийном режиме, перезагрузка не нужна =="
+else
+  echo "== включаю аварийный режим =="
+  api -X POST -d "$(jq -n --argjson k "$key_id" '{type:"linux64", ssh_keys:[$k]}')" \
+    "$API/servers/$SERVER_ID/actions/enable_rescue" | jq -r '.action.status'
+
+  echo "== мягко выключаю сервер =="
+  api -X POST "$API/servers/$SERVER_ID/actions/shutdown" >/dev/null
+  if ! wait_status off 18; then
+    echo "не выключился по ACPI — выключаю принудительно"
+    api -X POST "$API/servers/$SERVER_ID/actions/poweroff" >/dev/null
+    wait_status off
+  fi
+
+  echo "== включаю (загрузка в аварийную систему) =="
+  api -X POST "$API/servers/$SERVER_ID/actions/poweron" >/dev/null
+  wait_status running
+
+  echo "== жду SSH в аварийной системе =="
+  wait_ssh 24 || { echo "::error::аварийная система не отвечает по SSH"; exit 1; }
 fi
-
-echo "== включаю (загрузка в аварийную систему) =="
-api -X POST "$API/servers/$SERVER_ID/actions/poweron" >/dev/null
-wait_status running
-
-echo "== жду SSH в аварийной системе =="
-wait_ssh 24 || { echo "::error::аварийная система не отвечает по SSH"; exit 1; }
 echo "аварийная система: $(ssh_try 'uname -sr')"
 
 echo "== прописываю ключ на диск сервера =="
-printf '%s\n' "$pub" | ssh_try 'bash -s' <<'EOS'
+# Ключ передаём аргументом: через stdin уже идёт сам скрипт.
+ssh_try "bash -s -- '$pub'" <<'EOS'
 set -eu
-key=$(cat)
+key="$1"
 target=""
 mkdir -p /mnt/target
 for part in $(lsblk -ln -o NAME,TYPE | awk '$2=="part"{print "/dev/"$1}'); do
