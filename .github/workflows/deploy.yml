@@ -1,27 +1,168 @@
-name: Deploy to Server
+name: Deploy
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  APP_DIR: /var/www/app
+  APP_NAME: shop-bot
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          host: 72.56.252.31
-          username: root
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd /var/www/app
-            git pull origin main
-            npm install --production
-            pm2 reload app || pm2 start src/index.js --name app
-            pm2 save
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Настроить SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          test -n "$SSH_HOST" || { echo "::error::не задан секрет SSH_HOST"; exit 1; }
+          test -n "$SSH_PRIVATE_KEY" || { echo "::error::не задан секрет SSH_PRIVATE_KEY"; exit 1; }
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Подготовить сервер (node, pm2, каталоги)
+        env:
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" 'bash -se' <<'EOS'
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          if ! command -v node >/dev/null 2>&1 || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 18 ]; then
+            echo "== ставлю Node.js 22 =="
+            curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+            apt-get install -y nodejs
+          fi
+          command -v rsync >/dev/null 2>&1 || apt-get install -y rsync
+          command -v pm2 >/dev/null 2>&1 || npm install -g pm2
+
+          mkdir -p /var/www/app/data
+          node -v && pm2 -v
+          EOS
+
+      - name: Залить код
+        env:
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          rsync -az --delete \
+            --exclude '.git' --exclude 'node_modules' --exclude 'data' --exclude '.env' \
+            -e "ssh -i ~/.ssh/id_deploy" ./ "$SSH_USER@$SSH_HOST:$APP_DIR/"
+
+      - name: Создать .env, если его ещё нет
+        env:
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
+          CRYPTO_PAY_TOKEN: ${{ secrets.CRYPTO_PAY_TOKEN }}
+          PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
+        run: |
+          ssh -i ~/.ssh/id_deploy \
+            -o SendEnv=none \
+            "$SSH_USER@$SSH_HOST" \
+            "APP_DIR='$APP_DIR' BOT_TOKEN='$BOT_TOKEN' ADMIN_IDS='$ADMIN_IDS' CRYPTO_PAY_TOKEN='$CRYPTO_PAY_TOKEN' PUBLIC_URL='$PUBLIC_URL' bash -se" <<'EOS'
+          set -euo pipefail
+          cd "$APP_DIR"
+
+          # .env на сервере — источник правды, деплой его не перезаписывает.
+          if [ -f .env ]; then
+            echo ".env уже есть, оставляю как есть"
+          else
+            test -n "$BOT_TOKEN" || { echo "нет .env и не задан секрет BOT_TOKEN"; exit 1; }
+            umask 077
+            {
+              echo "BOT_TOKEN=$BOT_TOKEN"
+              echo "ADMIN_IDS=$ADMIN_IDS"
+              echo "BOT_MODE=polling"
+              echo "CURRENCY=RUB"
+              echo "CURRENCY_SYMBOL=₽"
+              echo "MIN_TOPUP=100"
+              echo "MAX_TOPUP=100000"
+              echo "DB_PATH=data/shop.db"
+              echo "PORT=3000"
+              echo "CRYPTO_PAY_TOKEN=$CRYPTO_PAY_TOKEN"
+              echo "CRYPTO_PAY_API_URL=https://pay.crypt.bot/api"
+              echo "CRYPTO_PAY_ASSETS=USDT,TON"
+              echo "PUBLIC_URL=$PUBLIC_URL"
+              echo "MANUAL_CRYPTO=0"
+            } > .env
+            chmod 600 .env
+            echo ".env создан"
+          fi
+          EOS
+
+      - name: Установить зависимости и перезапустить бота
+        env:
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" \
+            "APP_DIR='$APP_DIR' APP_NAME='$APP_NAME' bash -se" <<'EOS'
+          set -euo pipefail
+          cd "$APP_DIR"
+
+          npm ci --omit=dev
+
+          if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
+            pm2 reload "$APP_NAME" --update-env
+          else
+            pm2 start src/index.js --name "$APP_NAME" --time
+          fi
+          pm2 save
+          pm2 startup systemd -u root --hp /root >/dev/null 2>&1 || true
+
+          sleep 5
+          pm2 describe "$APP_NAME" | sed -n '1,20p'
+          EOS
+
+      - name: Проверить, что бот поднялся
+        env:
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" \
+            "APP_NAME='$APP_NAME' bash -se" <<'EOS'
+          set -euo pipefail
+
+          status=$(pm2 jlist | node -e "
+            let raw='';process.stdin.on('data',d=>raw+=d).on('end',()=>{
+              const app=JSON.parse(raw).find(a=>a.name===process.env.APP_NAME);
+              if(!app){console.log('missing');process.exit(0)}
+              console.log(app.pm2_env.status+' restarts='+app.pm2_env.restart_time);
+            });")
+          echo "pm2: $status"
+
+          echo '== healthcheck =='
+          curl -fsS --max-time 10 http://127.0.0.1:3000/health || { echo 'сервер не отвечает'; exit 1; }
+          echo
+
+          echo '== последние логи =='
+          pm2 logs "$APP_NAME" --lines 30 --nostream || true
+
+          case "$status" in online*) ;; *) echo "::error::бот не в статусе online"; exit 1;; esac
+          EOS

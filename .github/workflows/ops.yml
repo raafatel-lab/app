@@ -1,0 +1,131 @@
+name: Ops
+
+# Пульт управления сервером: запускается вручную (в том числе через API),
+# чтобы смотреть логи и состояние бота, не заходя на сервер по SSH.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Что сделать на сервере
+        required: true
+        default: status
+        type: choice
+        options:
+          - status
+          - logs
+          - restart
+          - stop
+          - start
+          - env-check
+          - env-sync
+          - backup-db
+      lines:
+        description: Сколько строк логов показать (для action=logs)
+        required: false
+        default: '100'
+
+env:
+  APP_DIR: /var/www/app
+  APP_NAME: shop-bot
+
+jobs:
+  ops:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Настроить SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          test -n "$SSH_HOST" || { echo "::error::не задан секрет SSH_HOST"; exit 1; }
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Выполнить ${{ inputs.action }}
+        env:
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
+          CRYPTO_PAY_TOKEN: ${{ secrets.CRYPTO_PAY_TOKEN }}
+          PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" \
+            "APP_DIR='$APP_DIR' APP_NAME='$APP_NAME' ACTION='${{ inputs.action }}' LINES='${{ inputs.lines }}' \
+             BOT_TOKEN='$BOT_TOKEN' ADMIN_IDS='$ADMIN_IDS' CRYPTO_PAY_TOKEN='$CRYPTO_PAY_TOKEN' PUBLIC_URL='$PUBLIC_URL' bash -se" <<'EOS'
+          set -euo pipefail
+          cd "$APP_DIR" 2>/dev/null || { echo "каталог $APP_DIR не найден — сначала запусти Deploy"; exit 1; }
+
+          case "$ACTION" in
+            status)
+              echo "== система =="; uptime; free -h | head -2; df -h / | tail -1
+              echo; echo "== pm2 =="; pm2 ls
+              echo; echo "== healthcheck =="
+              curl -fsS --max-time 10 http://127.0.0.1:3000/health && echo || echo 'сервер не отвечает'
+              echo; echo "== версия кода =="; git log --oneline -1 2>/dev/null || echo 'не git-каталог'
+              echo; echo "== база =="; ls -lh data/ 2>/dev/null || echo 'базы ещё нет'
+              ;;
+            logs)
+              pm2 logs "$APP_NAME" --lines "${LINES:-100}" --nostream
+              ;;
+            restart)
+              pm2 restart "$APP_NAME" --update-env && sleep 3 && pm2 ls
+              ;;
+            stop)
+              pm2 stop "$APP_NAME" && pm2 ls
+              ;;
+            start)
+              pm2 start "$APP_NAME" 2>/dev/null || pm2 start src/index.js --name "$APP_NAME" --time
+              sleep 3; pm2 ls
+              ;;
+            env-check)
+              # значения не печатаем — только какие ключи заданы
+              echo "== .env на сервере =="
+              while IFS='=' read -r key value; do
+                case "$key" in ''|\#*) continue;; esac
+                if [ -n "$value" ]; then echo "$key = задан (${#value} симв.)"; else echo "$key = пусто"; fi
+              done < .env
+              ;;
+            env-sync)
+              test -n "$BOT_TOKEN" || { echo "секрет BOT_TOKEN не задан — нечем перезаписывать"; exit 1; }
+              cp .env ".env.bak.$(date +%s)" 2>/dev/null || true
+              umask 077
+              {
+                echo "BOT_TOKEN=$BOT_TOKEN"
+                echo "ADMIN_IDS=$ADMIN_IDS"
+                echo "BOT_MODE=polling"
+                echo "CURRENCY=RUB"
+                echo "CURRENCY_SYMBOL=₽"
+                echo "MIN_TOPUP=100"
+                echo "MAX_TOPUP=100000"
+                echo "DB_PATH=data/shop.db"
+                echo "PORT=3000"
+                echo "CRYPTO_PAY_TOKEN=$CRYPTO_PAY_TOKEN"
+                echo "CRYPTO_PAY_API_URL=https://pay.crypt.bot/api"
+                echo "CRYPTO_PAY_ASSETS=USDT,TON"
+                echo "PUBLIC_URL=$PUBLIC_URL"
+                echo "MANUAL_CRYPTO=0"
+              } > .env
+              chmod 600 .env
+              echo ".env перезаписан из секретов, старый сохранён рядом"
+              pm2 restart "$APP_NAME" --update-env >/dev/null 2>&1 || true
+              ;;
+            backup-db)
+              mkdir -p /var/backups/shop
+              target="/var/backups/shop/shop-$(date +%Y%m%d-%H%M%S).db"
+              DB_SRC=data/shop.db DB_DST="$target" node -e '
+                const Database = require("better-sqlite3");
+                const db = new Database(process.env.DB_SRC, { readonly: true });
+                db.backup(process.env.DB_DST)
+                  .then(() => { console.log("резервная копия готова"); process.exit(0); })
+                  .catch((e) => { console.error(e.message); process.exit(1); });
+              '
+              ls -lh /var/backups/shop | tail -5
+              ;;
+            *)
+              echo "неизвестное действие: $ACTION"; exit 1
+              ;;
+          esac
+          EOS
