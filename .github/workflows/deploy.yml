@@ -113,12 +113,25 @@ jobs:
 
           # Ключ работающему серверу через API не добавить, поэтому меняем пароль
           # root и им прописываем ключ. Службы при этом не перезапускаются.
-          password=$(curl -fsS -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
-            "https://api.hetzner.cloud/v1/servers/$server_id/actions/reset_password" | jq -r '.root_password // empty')
-          test -n "$password" || { echo "::error::API не выдал новый пароль root"; exit 1; }
+          reset=$(curl -fsS -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            "https://api.hetzner.cloud/v1/servers/$server_id/actions/reset_password")
+          password=$(echo "$reset" | jq -r '.root_password // empty')
+          action_id=$(echo "$reset" | jq -r '.action.id // empty')
+          test -n "$password" || { echo "::error::API не выдал новый пароль root: $(echo "$reset" | jq -c '.error // .')"; exit 1; }
           echo "::add-mask::$password"
-          echo "пароль root обновлён, жду применения"
-          sleep 25
+
+          # Дожидаемся, пока Hetzner реально применит пароль на машине.
+          for _ in $(seq 1 20); do
+            state=$(curl -fsS -H "Authorization: Bearer $HCLOUD_TOKEN" \
+              "https://api.hetzner.cloud/v1/actions/$action_id" | jq -r '.action.status')
+            echo "статус смены пароля: $state"
+            case "$state" in
+              success) break ;;
+              error) echo "::error::Hetzner не смог сменить пароль (нужен работающий qemu-guest-agent)"; exit 1 ;;
+            esac
+            sleep 5
+          done
+          sleep 5
 
           if ! ssh-keygen -y -f ~/.ssh/id_deploy | sshpass -p "$password" ssh \
                -o PreferredAuthentications=password -o PubkeyAuthentication=no -o ConnectTimeout=25 \
