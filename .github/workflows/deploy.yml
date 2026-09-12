@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APP_DIR: /var/www/app
+  APP_DIR: /var/www/shop-bot
   APP_NAME: shop-bot
 
 jobs:
@@ -99,7 +99,7 @@ jobs:
           command -v rsync >/dev/null 2>&1 || apt-get install -y rsync
           command -v pm2 >/dev/null 2>&1 || npm install -g pm2
 
-          mkdir -p /var/www/app/data
+          mkdir -p /var/www/shop-bot/data
           node -v && pm2 -v
           EOS
 

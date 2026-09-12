@@ -126,7 +126,7 @@ curl -fsSL https://raw.githubusercontent.com/raafatel-lab/app/claude/telegram-sh
 ```bash
 pm2 logs shop-bot          # логи
 pm2 restart shop-bot       # перезапуск
-nano /var/www/app/.env     # настройки, после правок: pm2 restart shop-bot --update-env
+nano /var/www/shop-bot/.env     # настройки, после правок: pm2 restart shop-bot --update-env
 ```
 
 ## Деплой на сервер (Hetzner)
@@ -170,7 +170,7 @@ Workflow **Deploy** запускается при пуше в `main` и вруч
 
 1. прогоняет тесты — при падении деплой не поедет;
 2. ставит на сервере Node.js 22, pm2, rsync, если их нет;
-3. синхронизирует код в `/var/www/app` (база `data/` и `.env` не трогаются);
+3. синхронизирует код в `/var/www/shop-bot` (база `data/` и `.env` не трогаются);
 4. создаёт `.env` из секретов, **только если его ещё нет** — правки на сервере переживают деплой;
 5. `npm ci --omit=dev`, перезапуск `pm2` и автозапуск после перезагрузки;
 6. проверяет, что процесс `online` и `/health` отвечает, иначе job падает.

@@ -7,7 +7,7 @@ set -euo pipefail
 
 REPO_URL=${REPO_URL:-https://github.com/raafatel-lab/app.git}
 BRANCH=${BRANCH:-claude/telegram-shop-bot-zziqdy}
-APP_DIR=${APP_DIR:-/var/www/app}
+APP_DIR=${APP_DIR:-/var/www/shop-bot}
 APP_NAME=${APP_NAME:-shop-bot}
 
 log() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
