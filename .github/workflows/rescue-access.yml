@@ -1,0 +1,30 @@
+name: Rescue access
+
+# Восстановление доступа к серверу, когда он не принимает деплой-ключ:
+# запускается изменением файла .github/rescue-trigger (и вручную).
+on:
+  push:
+    paths:
+      - .github/rescue-trigger
+  workflow_dispatch:
+
+jobs:
+  rescue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Подготовить ключ
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: bash scripts/ci/prepare-key.sh
+
+      - name: Вернуть доступ через аварийный режим Hetzner
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
+        run: |
+          test -n "$HCLOUD_TOKEN" || { echo "::error::не задан секрет HCLOUD_TOKEN"; exit 1; }
+          test -n "$SSH_HOST" || { echo "::error::не задан адрес сервера"; exit 1; }
+          bash scripts/ci/hetzner-rescue.sh
