@@ -82,6 +82,55 @@ jobs:
 
           ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
+      - name: Выдать ключу доступ на сервер (через API Hetzner)
+        env:
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
+          SSH_HOST: ${{ secrets.SSH_HOST || vars.SSH_HOST }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          if ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 "$SSH_USER@$SSH_HOST" true 2>/dev/null; then
+            echo "ключ уже авторизован на сервере"
+            exit 0
+          fi
+
+          if [ -z "$HCLOUD_TOKEN" ]; then
+            echo "::error::сервер не принимает ключ. Добавь его в ~/.ssh/authorized_keys на сервере либо задай секрет HCLOUD_TOKEN, чтобы деплой сделал это сам"
+            exit 1
+          fi
+
+          echo "ключ не принят — получаю доступ через API Hetzner"
+          sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+
+          servers=$(curl -fsS -H "Authorization: Bearer $HCLOUD_TOKEN" 'https://api.hetzner.cloud/v1/servers?per_page=50')
+          server_id=$(echo "$servers" | jq -r --arg ip "$SSH_HOST" '.servers[] | select(.public_net.ipv4.ip == $ip) | .id')
+          if [ -z "$server_id" ]; then
+            echo "::error::в проекте Hetzner нет сервера с этим адресом"
+            echo "серверы проекта:"
+            echo "$servers" | jq -r '.servers[] | "  \(.name) — \(.public_net.ipv4.ip) — \(.status)"'
+            exit 1
+          fi
+          echo "сервер найден в проекте (id $server_id)"
+
+          # Ключ работающему серверу через API не добавить, поэтому меняем пароль
+          # root и им прописываем ключ. Службы при этом не перезапускаются.
+          password=$(curl -fsS -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            "https://api.hetzner.cloud/v1/servers/$server_id/actions/reset_password" | jq -r '.root_password // empty')
+          test -n "$password" || { echo "::error::API не выдал новый пароль root"; exit 1; }
+          echo "::add-mask::$password"
+          echo "пароль root обновлён, жду применения"
+          sleep 25
+
+          if ! ssh-keygen -y -f ~/.ssh/id_deploy | sshpass -p "$password" ssh \
+               -o PreferredAuthentications=password -o PubkeyAuthentication=no -o ConnectTimeout=25 \
+               "$SSH_USER@$SSH_HOST" \
+               'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo ключ_записан'; then
+            echo "::error::сервер не пустил по паролю — вероятно, в sshd выключен вход по паролю (PasswordAuthentication no)"
+            exit 1
+          fi
+
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=20 "$SSH_USER@$SSH_HOST" \
+            'echo "вход по ключу работает: $(hostname)"'
+
       - name: Подготовить сервер (node, pm2, каталоги)
         env:
           SSH_USER: ${{ vars.SSH_USER || 'root' }}
