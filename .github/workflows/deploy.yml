@@ -45,6 +45,20 @@ jobs:
           # При вставке в веб-форму ключ часто теряет переносы строк, и ssh
           # падает на невнятном "error in libcrypto". Восстанавливаем формат.
           if ! ssh-keygen -y -f ~/.ssh/id_deploy >/dev/null 2>&1; then
+            # Ключ можно положить в секрет одной строкой в base64 — так его
+            # не испортит ни вставка в веб-форму, ни мессенджер.
+            if ! grep -q 'PRIVATE KEY' ~/.ssh/id_deploy; then
+              tr -d ' \t\r\n' < ~/.ssh/id_deploy | base64 -d > ~/.ssh/id_deploy.dec 2>/dev/null || true
+              if grep -q 'PRIVATE KEY' ~/.ssh/id_deploy.dec 2>/dev/null; then
+                mv ~/.ssh/id_deploy.dec ~/.ssh/id_deploy
+                chmod 600 ~/.ssh/id_deploy
+                echo "ключ пришёл одной строкой в base64 — раскодировал"
+              fi
+              rm -f ~/.ssh/id_deploy.dec
+            fi
+          fi
+
+          if ! ssh-keygen -y -f ~/.ssh/id_deploy >/dev/null 2>&1; then
             echo "ключ не читается как есть — восстанавливаю переносы строк"
             python3 - <<'PY'
           import pathlib, re
