@@ -17,8 +17,8 @@ async function main() {
     );
   }
 
-  const server = app.listen(config.port, () => {
-    console.log(`[http] слушаю порт ${config.port}`);
+  const server = app.listen(config.port, config.bindHost, () => {
+    console.log(`[http] слушаю ${config.bindHost}:${config.port}`);
     if (config.cryptoBot.enabled && config.publicUrl) {
       console.log(`[http] вебхук CryptoBot: ${config.publicUrl}/webhook/cryptobot`);
     }

@@ -23,6 +23,8 @@ const config = {
   dbPath: process.env.DB_PATH || 'data/shop.db',
 
   port: Number(process.env.PORT || 3000),
+  // Без вебхуков наружу слушать нечего — не открываем лишний порт на сервере.
+  bindHost: process.env.BIND_HOST || (process.env.PUBLIC_URL ? '0.0.0.0' : '127.0.0.1'),
   // Публичный адрес сервера — нужен для вебхуков платёжек и (опционально) бота.
   publicUrl: (process.env.PUBLIC_URL || '').replace(/\/+$/, ''),
   useWebhook: process.env.BOT_MODE === 'webhook',
