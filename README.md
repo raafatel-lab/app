@@ -106,6 +106,29 @@ SQLite-файл по пути `DB_PATH` (по умолчанию `data/shop.db`)
 первом запуске. Файл базы в git не попадает — для бэкапа достаточно скопировать его
 вместе с `-wal`/`-shm`.
 
+## Запуск на сервере одной командой
+
+На чистом сервере (Ubuntu/Debian, под root) достаточно одной строки — она поставит
+Node.js 22, pm2, склонирует код, создаст `.env` и запустит бота:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/raafatel-lab/app/claude/telegram-shop-bot-zziqdy/scripts/install.sh \
+  | BOT_TOKEN='токен от BotFather' ADMIN_IDS='твой Telegram ID' CRYPTO_PAY_TOKEN='токен Crypto Pay' bash
+```
+
+`CRYPTO_PAY_TOKEN` можно не указывать — приём крипты включится позже правкой `.env`.
+
+Тот же скрипт обновляет бота: запускаете повторно (уже без переменных) — он подтянет
+свежий код и перезапустит процесс. `.env` и база данных при этом не трогаются.
+
+Полезное после установки:
+
+```bash
+pm2 logs shop-bot          # логи
+pm2 restart shop-bot       # перезапуск
+nano /var/www/app/.env     # настройки, после правок: pm2 restart shop-bot --update-env
+```
+
 ## Деплой на сервер (Hetzner)
 
 Деплой и управление сервером идут через GitHub Actions — на сервер ходит раннер,
