@@ -88,6 +88,24 @@ test('скрытый товар купить нельзя', () => {
   assert.throws(() => shop.purchase(user.id, productId, 1), /PRODUCT_UNAVAILABLE/);
 });
 
+test('битую ссылку можно убрать со склада, проданную — нет', () => {
+  const user = makeUser(50000);
+  const productId = makeProduct(1000, ['https://g.test/ok', 'https://g.test/битая']);
+
+  const items = productsRepo.listAvailableItems(productId, 10, 0);
+  assert.strictEqual(items.length, 2);
+
+  const broken = items.find((i) => i.payload.includes('битая'));
+  assert.strictEqual(productsRepo.removeAvailableItem(broken.id), 1);
+  assert.strictEqual(productsRepo.stock(productId), 1);
+
+  const order = shop.purchase(user.id, productId, 1);
+  const soldId = db.prepare("SELECT id FROM product_items WHERE product_id = ? AND status = 'sold'").get(productId).id;
+
+  assert.strictEqual(productsRepo.removeAvailableItem(soldId), 0, 'проданная ссылка не удаляется');
+  assert.strictEqual(ordersRepo.itemsOfOrder(order.orderId).length, 1, 'ссылка осталась в заказе покупателя');
+});
+
 test('оплата зачисляется один раз', () => {
   const user = makeUser(0);
   const paymentId = paymentsRepo.create({ userId: user.id, provider: 'cryptobot', amountCents: 50000 });

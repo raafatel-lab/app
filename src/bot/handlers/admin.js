@@ -62,7 +62,10 @@ function productView(id) {
       `Статус: ${p.is_active ? '🟢 в продаже' : '⚪️ скрыт'}`,
     ].join('\n'),
     keyboard: Markup.inlineKeyboard([
-      [Markup.button.callback('➕ Добавить ссылки', `adm:stock:${p.id}`)],
+      [
+        Markup.button.callback('➕ Добавить ссылки', `adm:stock:${p.id}`),
+        Markup.button.callback('🔗 Склад', `adm:items:${p.id}:0`),
+      ],
       [
         Markup.button.callback('💰 Цена', `adm:price:${p.id}`),
         Markup.button.callback('✏️ Название', `adm:title:${p.id}`),
@@ -74,6 +77,42 @@ function productView(id) {
       ],
       [Markup.button.callback('⬅️ К товарам', 'adm:products')],
     ]),
+  };
+}
+
+const ITEMS_PAGE = 8;
+
+// Склад товара: список непроданных ссылок с удалением по одной.
+function itemsView(productId, offset) {
+  const product = productsRepo.getById(productId);
+  if (!product) return null;
+
+  const items = productsRepo.listAvailableItems(productId, ITEMS_PAGE, offset);
+  if (!items.length && offset > 0) return itemsView(productId, 0);
+
+  const lines = items.map((i, n) => `${offset + n + 1}. <code>${escapeHtml(i.payload)}</code>`);
+  const rows = items.map((i, n) => [
+    Markup.button.callback(`🗑 убрать #${offset + n + 1}`, `adm:delitem:${i.id}:${offset}`),
+  ]);
+
+  const nav = [];
+  if (offset > 0) nav.push(Markup.button.callback('⬅️', `adm:items:${productId}:${Math.max(0, offset - ITEMS_PAGE)}`));
+  if (offset + ITEMS_PAGE < product.stock) {
+    nav.push(Markup.button.callback('➡️', `adm:items:${productId}:${offset + ITEMS_PAGE}`));
+  }
+  if (nav.length) rows.push(nav);
+  rows.push([Markup.button.callback('⬅️ К товару', `adm:p:${productId}`)]);
+
+  return {
+    text: [
+      `🔗 <b>Склад: ${escapeHtml(product.title)}</b>`,
+      `Непроданных ссылок: ${product.stock}`,
+      '',
+      lines.length ? lines.join('\n') : 'Склад пуст — добавь ссылки кнопкой «➕ Добавить ссылки».',
+      '',
+      '<i>Удаляются только непроданные ссылки. Выданные покупателям остаются в их заказах.</i>',
+    ].join('\n'),
+    keyboard: Markup.inlineKeyboard(rows),
   };
 }
 
@@ -296,6 +335,27 @@ function register(bot) {
     productsRepo.update(state.productId, { description: ctx.message.text.trim() });
     const view = productView(state.productId);
     return ctx.reply(view.text, { parse_mode: 'HTML', ...view.keyboard });
+  });
+
+  bot.action(/^adm:items:(\d+):(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const view = itemsView(Number(ctx.match[1]), Number(ctx.match[2]));
+    if (!view) return ctx.reply('Товар не найден.');
+    return edit(ctx, view);
+  });
+
+  bot.action(/^adm:delitem:(\d+):(\d+)$/, async (ctx) => {
+    const itemId = Number(ctx.match[1]);
+    const offset = Number(ctx.match[2]);
+
+    const item = productsRepo.getItem(itemId);
+    if (!item) return ctx.answerCbQuery('Ссылка уже удалена.');
+
+    const removed = productsRepo.removeAvailableItem(itemId);
+    await ctx.answerCbQuery(removed ? 'Ссылка убрана со склада' : 'Ссылка уже продана — удалить нельзя', {
+      show_alert: !removed,
+    });
+    return edit(ctx, itemsView(item.product_id, offset));
   });
 
   bot.action(/^adm:toggle:(\d+)$/, async (ctx) => {

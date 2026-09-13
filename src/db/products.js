@@ -38,6 +38,21 @@ module.exports = {
     return payloads.length;
   },
 
+  // Ссылки, ещё лежащие на складе: их можно посмотреть и убрать поштучно.
+  listAvailableItems: (productId, limit = 10, offset = 0) =>
+    db
+      .prepare(
+        `SELECT id, payload FROM product_items
+         WHERE product_id = ? AND status = 'available' ORDER BY id LIMIT ? OFFSET ?`,
+      )
+      .all(productId, limit, offset),
+
+  getItem: (itemId) => db.prepare('SELECT * FROM product_items WHERE id = ?').get(itemId),
+
+  // Удаляем только непроданное: выданные ссылки принадлежат заказам.
+  removeAvailableItem: (itemId) =>
+    db.prepare("DELETE FROM product_items WHERE id = ? AND status = 'available'").run(itemId).changes,
+
   stock: (productId) =>
     db
       .prepare(`SELECT COUNT(*) AS c FROM product_items WHERE product_id = ? AND status = 'available'`)

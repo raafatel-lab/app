@@ -4,6 +4,7 @@ const money = require('../../utils/money');
 const db = require('../../db');
 const ordersRepo = require('../../db/orders');
 const billing = require('../../services/billing');
+const { ACTIVATION_HINT } = require('../texts');
 
 const TX_LABEL = {
   topup: '➕ Пополнение',
@@ -101,7 +102,7 @@ function register(bot) {
     const items = ordersRepo.itemsOfOrder(orderId);
     const payloads = items.map((i) => `<code>${escapeHtml(i.payload)}</code>`).join('\n');
     return ctx.reply(
-      [`🔗 <b>Заказ #${order.id}</b> · ${escapeHtml(order.title)}`, '', payloads].join('\n'),
+      [`🔗 <b>Заказ #${order.id}</b> · ${escapeHtml(order.title)}`, '', payloads, '', ACTIVATION_HINT].join('\n'),
       { parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
     );
   });

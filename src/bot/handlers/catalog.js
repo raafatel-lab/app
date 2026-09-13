@@ -5,6 +5,7 @@ const productsRepo = require('../../db/products');
 const shop = require('../../services/shop');
 const { notifyAdmins } = require('../notify');
 const { escapeHtml } = require('./profile');
+const { ACTIVATION_HINT } = require('../texts');
 
 const MAX_PER_ORDER = 50;
 
@@ -128,6 +129,8 @@ function register(bot) {
         `${escapeHtml(result.product.title)} · ${result.quantity} шт · ${money.format(result.totalCents)}`,
         '',
         links,
+        '',
+        ACTIVATION_HINT,
         '',
         'Ссылки всегда доступны в разделе «📦 Мои покупки».',
       ].join('\n'),
